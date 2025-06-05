@@ -16,6 +16,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             CouponList()
+                
         }
     }
     
@@ -40,35 +41,9 @@ struct ContentView: View {
                 }
                 
             }
+            
         }
-    }
-    
-    func couponDetailView(coupon: Coupon) -> some View {
-        VStack {
-            Text("세션")
-            
-            Text(coupon.couponId)
-            Text(coupon.title)
-            
-            Spacer()
-                .frame(height: 20)
-            
-            HStack {
-                Button {
-                    
-                } label: {
-                    Text("확인")
-                }
-                
-                Button {
-                    // TODO: - MPC 세션 연결 가능할 때 버튼 활성화
-                    
-                } label: {
-                    Text("사용하기")
-                }
-                
-            }
-        }
+        
     }
     
     struct CouponView: View {
@@ -87,28 +62,21 @@ struct ContentView: View {
                     .frame(height: 20)
                 
                 HStack {
-                    Button {
-                        
-                    } label: {
-                        Text("확인")
-                    }
-                    
-                    Button {
-                        // TODO: - MPC 세션 연결 가능할 때 버튼 활성화
-                        
+                    NavigationLink {
+                        CouponInteractionView(viewModel: viewModel)
                     } label: {
                         Text("사용하기")
                     }
                     .disabled(!viewModel.isConnectWithPeer)
-                    
                 }
             }
             .onAppear {
                 viewModel.startupMPC()
             }
-            .onDisappear {
-                        viewModel.mpc?.invalidate()
-                    }
+            // 뒤로가기 할 때 세션이 종료되도록 한다.
+//            .onDisappear {
+//                        viewModel.mpc?.invalidate()
+//                    }
         }
     }
 }

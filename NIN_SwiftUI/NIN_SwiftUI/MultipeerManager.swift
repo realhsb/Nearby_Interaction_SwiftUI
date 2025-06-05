@@ -30,6 +30,9 @@ class MultipeerManager: NSObject {
     var peerConnectedHandler: ((MCPeerID) -> Void)?     // 다른 피어와 연결됐을 때
     var peerDisconnectedHandler: ((MCPeerID) -> Void)?  // 다른 피어와 연결 끊어졌을 때
     
+    var connectedPeer: MCPeerID?
+    var mpcSessionState: MCSessionState = .notConnected
+    
     var myCoupon: Coupon
     
     init(myCoupon: Coupon) {
@@ -128,21 +131,37 @@ class MultipeerManager: NSObject {
         mcSession.disconnect()
     }
     
+    /// peer의 연결에 성공했을 때 호출
     private func peerConnected(peerID: MCPeerID) {
         if let handler = peerConnectedHandler {
             DispatchQueue.main.async {
                 handler(peerID)
+                self.connectedPeer = peerID
                 print("MP: \(peerID) 실행")
             }
         }
     }
     
+    /// peer의 연결이 끊어졌을 때 호출
     private func peerDisconnected(peerID: MCPeerID) {
         if let handler = peerDisconnectedHandler {
             DispatchQueue.main.async {
                 handler(peerID)
                 print("MP: \(peerID) 연결 해제")
             }
+        }
+        
+//        ni?.invalidateInteraction(with: peerID)
+    }
+    
+    /// 입력받은 data를 peer에게 전송
+    func send(data: Data, peer: MCPeerID) {
+        do {
+            // data 전송
+            try self.mcSession.send(data, toPeers: [peer], with: .reliable)
+        } catch let error {
+            // TODO: - Error(Send Message Failed)
+            NSLog("Error sending data: \(error)")
         }
     }
 }
@@ -207,10 +226,13 @@ extension MultipeerManager: MCSessionDelegate {
     func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         switch state {
         case .connected:
+            self.mpcSessionState = .connected
             self.peerConnected(peerID: peerID)
         case .notConnected:
+            self.mpcSessionState = .notConnected
             self.peerDisconnected(peerID: peerID)
         case .connecting:
+            self.mpcSessionState = .connecting
             break
         @unknown default:   // 미래 확장성을 고려하여 추가
             fatalError("Unhandled MCSessionState")
@@ -245,9 +267,4 @@ extension MultipeerManager: MCSessionDelegate {
     func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: (any Error)?) {
         print("finish receiving resource. url: \(String(describing: localURL)), error: \(String(describing: error))")
     }
-}
-
-// Error
-extension MultipeerManager {
-
 }
