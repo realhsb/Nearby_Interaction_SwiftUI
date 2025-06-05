@@ -9,25 +9,27 @@ import Foundation
 import MultipeerConnectivity
 import NearbyInteraction
 
-@MainActor
+enum DistanceDirectionState {
+    case closeUpInFOV, notCloseUpInFOV, outOfFOV, unknown
+}
+//@MainActor
 @Observable
-class CouponViewModel: ObservableObject {
+class CouponViewModel: NSObject {
 
-    var selectedCoupon: Coupon
-    var isConnectWithPeer: Bool = false
-    var connectedPeer: MCPeerID?            // 연결된 Peer
-    var currentDistance: Float?
+    var selectedCoupon: Coupon                  // 사용자가 고른 coupon
+    var isConnectWithPeer: Bool = false         // peer와 연결되어있는지 여부
+    var connectedPeer: MCPeerID?                // 연결된 Peer
+    var currentDistance: Float?                 // peer간의 거리 (0.00m)
     
-    var mpc: MultipeerManager?
-    var ni: NearbyInteractionManager?
+    var mpc: MultipeerManager?                  // MPC Manager
     
-    // NI 거리 정보 컴퓨티드 프로퍼티
-    var displayDistance: String {
-        guard let distance = ni?.updates.first?.distance else {
-            return "측정 중..."
-        }
-        return String(format: "%.2f m", distance)
-    }
+    var niSession: NISession?                   // NI 통신시 사용되는 Session
+    var peerDiscoveryToken: NIDiscoveryToken?   // peer의 discoveryToken
+    var sharedTokenWithPeer = false             // peer와 discoveryToken을 교환했는지 여부
+    var currentDistanceDirectionState: DistanceDirectionState = .unknown
+    
+    var distance: Float?
+    
 
     init(selectedCoupon: Coupon) {
         self.selectedCoupon = selectedCoupon
@@ -49,55 +51,38 @@ class CouponViewModel: ObservableObject {
     }
     
     func startNI() {
-        print("CouponViewModel - startNI()")
+        print("CouponViewModel - startupMPC()")
         
+        // NISession 생성
+        niSession = NISession()
         
-//        if ni != nil {
-//            ni?.niSession.invalidate()
-//        }
-//        
-//        if let connectedPeer = connectedPeer, let mpc = mpc {
-//            // MPC가 있을 경우 ni 시작
-//            print("CouponViewModel - ni 시작, \(connectedPeer)")
-//            let newNI = NearbyInteractionManager(peer: connectedPeer)
-//            self.ni = newNI
-//            
-//            // discoveryToken을 공유한 적 없을 때            
-//            if ni?.peerDiscoveryToken == nil || ni?.isTokenShared == false {
-//                ni?.shareDiscoveryToken(with: connectedPeer, sendDateHandler: mpc.send)
-//                print("\(String(describing: ni?.peerDiscoveryToken))")
-//            }
-//            
-//            ni?.runConfiguration(with: connectedPeer)
-//            
-//            
-//        } else {
-//            print("MPC 없음. MPC 시작")
-//            startupMPC()
-//        }
-        guard isConnectWithPeer, let connectedPeer = connectedPeer, let mpc = mpc else {
-                print("❌ 연결된 peer 없음 또는 MPC 없음")
-                return
+        // delegate 설정
+        niSession?.delegate = self
+        
+        sharedTokenWithPeer = false
+        
+        if connectedPeer != nil && mpc != nil {
+            if let myToken = niSession?.discoveryToken {
+                // 화면 업데이트 (찾는 중)
+                if !sharedTokenWithPeer {
+                    shareMyDiscoveryToken(token: myToken)
+                }
+                guard let peerToken = peerDiscoveryToken else {
+                    return
+                }
+                let config = NINearbyPeerConfiguration(peerToken: peerToken)
+                niSession?.run(config)
+            } else {
+                // TODO: Error - (Unable to get self discovery token)
+                print("")
             }
-
-            // 기존 세션 invalidate
-            ni?.niSession.invalidate()
-
-            // 새 NI 매니저 생성
-            let newNI = NearbyInteractionManager(peer: connectedPeer)
-            self.ni = newNI
-
-            // 내 discoveryToken 보내기
-            if newNI.peerDiscoveryToken == nil || newNI.isTokenShared == false {
-                newNI.shareDiscoveryToken(with: connectedPeer, sendDateHandler: mpc.send)
-            }
-
-            // peer token 이미 받았으면 바로 config 실행
-            if newNI.peerDiscoveryToken != nil {
-                newNI.runConfiguration(with: connectedPeer)
-            }
+        } else {
+            print("Discovering Peer ...")
+            startupMPC()
+        }
     }
     
+
     // TODO: Move to MPC Manager
     // MPC 연결이 완료되었을 때 호출
     func connectedToPeer(peer: MCPeerID) {
@@ -122,7 +107,7 @@ class CouponViewModel: ObservableObject {
             
         }
         
-        ni?.invalidateInteraction(with: peer)
+        // ni 연결 끊기
     }
 
     // 상대방이 보내온 NIDiscoveryToken을 수신했을 때 실행
@@ -130,11 +115,145 @@ class CouponViewModel: ObservableObject {
         // discoveryToken을 서로 공유했다면, ni 시작
         print("상대방이 보내온 NIDiscoveryToken을 수신했을 때 실행")
         // 1. peerToken 저장
-        ni?.peerTokenReceived(for: peer, data: data)
-
+        guard let discoveryToken = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NIDiscoveryToken.self, from: data) else {
+            fatalError("Unexpectedly failed to decode discovery token.")
+        }
+        peerDidShareDiscoveryToken(peer: peer, token: discoveryToken)
         // 2. runConfiguration 실행
-        if ni?.isTokenShared == true {
-            ni?.runConfiguration(with: peer)
+        
+    }
+    
+    // NI
+    func shareMyDiscoveryToken(token: NIDiscoveryToken) {
+        guard let encodedData = try?  NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true) else {
+            fatalError("Unexpectedly failed to encode discovery token.")
+        }
+        mpc?.sendDataToAllPeers(data: encodedData)
+        sharedTokenWithPeer = true
+    }
+    
+    func peerDidShareDiscoveryToken(peer: MCPeerID, token: NIDiscoveryToken) {
+        print("peerDidShareDiscoveryToken(\(token)")
+        if connectedPeer != peer {
+            fatalError("Received token from unexpected peer.")
+        }
+        // Create a configuration.
+        peerDiscoveryToken = token
+
+        let config = NINearbyPeerConfiguration(peerToken: token)
+
+        // Run the session.
+        print("run the session")
+        niSession?.run(config)
+    }
+}
+
+extension CouponViewModel: NISessionDelegate {
+    func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
+        print("NISession didUpdate")
+        guard let peerToken = peerDiscoveryToken else {
+            fatalError("don't have peer token")
+        }
+
+        // Find the right peer.
+        let peerObj = nearbyObjects.first { (obj) -> Bool in
+            return obj.discoveryToken == peerToken
+        }
+
+        guard let nearbyObjectUpdate = peerObj else {
+            return
+        }
+        
+        
+        self.distance = nearbyObjectUpdate.distance
+        print("\(String(describing: distance))")
+        // Update the the state and visualizations.
+//        let nextState = getDistanceDirectionState(from: nearbyObjectUpdate)
+//        updateVisualization(from: currentDistanceDirectionState, to: nextState, with: nearbyObjectUpdate)
+//        currentDistanceDirectionState = nextState
+    }
+
+    func session(_ session: NISession, didRemove nearbyObjects: [NINearbyObject], reason: NINearbyObject.RemovalReason) {
+        print("NISession didRemove")
+        guard let peerToken = peerDiscoveryToken else {
+            fatalError("don't have peer token")
+        }
+        // Find the right peer.
+        let peerObj = nearbyObjects.first { (obj) -> Bool in
+            return obj.discoveryToken == peerToken
+        }
+
+        if peerObj == nil {
+            return
+        }
+
+        currentDistanceDirectionState = .unknown
+
+        
+        // 피어 연결해제 원인
+        switch reason {
+        case .peerEnded:
+            // The peer token is no longer valid.
+            peerDiscoveryToken = nil
+            
+            // The peer stopped communicating, so invalidate the session because
+            // it's finished.
+            session.invalidate()
+            
+            // Restart the sequence to see if the peer comes back.
+            startNI()
+            
+            // Update the app's display.
+//            updateInformationLabel(description: "Peer Ended")
+        case .timeout:
+            
+            // The peer timed out, but the session is valid.
+            // If the configuration is valid, run the session again.
+            if let config = session.configuration {
+                session.run(config)
+            }
+//            updateInformationLabel(description: "Peer Timeout")
+        default:
+            fatalError("Unknown and unhandled NINearbyObject.RemovalReason")
+        }
+    }
+//
+    
+    
+    func session(_ session: NISession, didInvalidateWith error: Error) {
+        currentDistanceDirectionState = .unknown
+        
+        // If the app lacks user approval for Nearby Interaction, present
+        // an option to go to Settings where the user can update the access.
+        if case NIError.userDidNotAllow = error {
+            if #available(iOS 15.0, *) {
+                // In iOS 15.0, Settings persists Nearby Interaction access.
+                //                updateInformationLabel(description: "Nearby Interactions access required. You can change access for NIPeekaboo in Settings.")
+                // Create an alert that directs the user to Settings.
+                let accessAlert = UIAlertController(title: "Access Required",
+                                                    message: """
+                                                    NIPeekaboo requires access to Nearby Interactions for this sample app.
+                                                    Use this string to explain to users which functionality will be enabled if they change
+                                                    Nearby Interactions access in Settings.
+                                                    """,
+                                                    preferredStyle: .alert)
+                accessAlert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: nil))
+                accessAlert.addAction(UIAlertAction(title: "Go to Settings", style: .default, handler: {_ in
+                    // Send the user to the app's Settings to update Nearby Interactions access.
+                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(settingsURL, options: [:], completionHandler: nil)
+                    }
+                }))
+                
+                // Display the alert.
+                //                present(accessAlert, animated: true, completion: nil)
+            } else {
+                // Before iOS 15.0, ask the user to restart the app so the
+                // framework can ask for Nearby Interaction access again.
+                //                updateInformationLabel(description: "Nearby Interactions access required. Restart NIPeekaboo to allow access.")
+            }
+            
+            return
         }
     }
 }

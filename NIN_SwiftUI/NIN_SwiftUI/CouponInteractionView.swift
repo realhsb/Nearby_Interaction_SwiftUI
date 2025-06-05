@@ -12,7 +12,7 @@ struct CouponInteractionView: View {
     var viewModel: CouponViewModel
     
     var body: some View {
-        Text("\(viewModel.displayDistance)")
+        Text("\(String(describing: viewModel.distance))")
             .onAppear {
                 print("viewmodel-startNI")
                 viewModel.startNI()

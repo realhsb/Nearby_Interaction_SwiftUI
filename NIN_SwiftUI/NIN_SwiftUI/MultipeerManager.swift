@@ -20,7 +20,7 @@ class MultipeerManager: NSObject {
     private var browser: MCNearbyServiceBrowser?
     
     private var discoveredPeers: [MCPeerID : [String : String]?] = [:]  //
-    private var mcSession: MCSession                    // 하나의 MCSession 안에서 여러 기기와 연결. 내가 ad일 때도 사용, brow일 때도 상대에게 공유
+    var mcSession: MCSession                    // 하나의 MCSession 안에서 여러 기기와 연결. 내가 ad일 때도 사용, brow일 때도 상대에게 공유
     
     private let serviceType = "birtherday" // same as that in info.plist
     private let myPeerID = MCPeerID(displayName: UIDevice.current.name)
@@ -155,12 +155,26 @@ class MultipeerManager: NSObject {
     }
     
     /// 입력받은 data를 peer에게 전송
-    func send(data: Data, peer: MCPeerID) {
+//    func send(data: Data, peer: MCPeerID) {
+//        do {
+//            // data 전송
+//            try self.mcSession.send(data, toPeers: [peer], with: .reliable)
+//        } catch let error {
+//            // TODO: - Error(Send Message Failed)
+//            NSLog("Error sending data: \(error)")
+//        }
+//    }
+    
+    
+    func sendDataToAllPeers(data: Data) {
+        sendData(data: data, peers: mcSession.connectedPeers, mode: .reliable)
+    }
+
+    func sendData(data: Data, peers: [MCPeerID], mode: MCSessionSendDataMode) {
         do {
             // data 전송
-            try self.mcSession.send(data, toPeers: [peer], with: .reliable)
+            try mcSession.send(data, toPeers: peers, with: mode)
         } catch let error {
-            // TODO: - Error(Send Message Failed)
             NSLog("Error sending data: \(error)")
         }
     }
